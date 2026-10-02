@@ -10,6 +10,8 @@ class BoundingBox(BaseModel):
 class FaceDetectionResult(BaseModel):
     face_id: int
     track_id: Optional[int] = None
+    human_bbox: Optional[BoundingBox] = None
+    human_confidence: Optional[float] = None
     bbox: BoundingBox
     face_confidence: float = Field(..., ge=0.0, le=1.0)
     emotion_label: str
@@ -20,6 +22,7 @@ class PredictionResponse(BaseModel):
     status: str
     filename: str
     total_faces: int
+    human_detected: bool = True
     detections: List[FaceDetectionResult]
     execution_time_ms: float
 

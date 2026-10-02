@@ -20,8 +20,8 @@ from components.visualizer import (
 )
 
 # Fixed System Thresholds & Configurations (Code-Level Controlled)
-FACE_CONF_THRESH = 0.65
-EMOTION_CONF_THRESH = 0.65
+FACE_CONF_THRESH = 0.40
+EMOTION_CONF_THRESH = 0.00
 VIDEO_FRAME_STRIDE = 3
 FACE_CROP_MARGIN = 0.15
 
@@ -147,11 +147,11 @@ st.sidebar.subheader("🔒 Fixed Code Configurations")
 st.sidebar.markdown(f"""
 <div class="thresh-box">
     <div class="thresh-label">Face Detection Confidence</div>
-    <div class="thresh-val">65% ({FACE_CONF_THRESH})</div>
+    <div class="thresh-val">40% ({FACE_CONF_THRESH})</div>
 </div>
 <div class="thresh-box">
     <div class="thresh-label">Emotion Classification Confidence</div>
-    <div class="thresh-val">65% ({EMOTION_CONF_THRESH})</div>
+    <div class="thresh-val">0% ({EMOTION_CONF_THRESH})</div>
 </div>
 <div class="thresh-box">
     <div class="thresh-label">Video / Live Frame Subsampling</div>
@@ -234,11 +234,11 @@ with tab1:
                         st.markdown("<br>", unsafe_allow_html=True)
 
                         if data["total_faces"] > 0:
-                            annotated_pil = render_predictions(image_bytes, data["detections"])
-                            st.image(annotated_pil, caption="Pipeline Annotations (Bounding Box, Track ID, Face Conf ≥ 65%, Emotion Conf ≥ 65%)", use_container_width=True)
+                            annotated_pil = render_predictions(image_bytes, data["detections"], human_detected=data.get("human_detected", True))
+                            st.image(annotated_pil, caption="Pipeline Annotations (Bounding Box, Track ID, Face Conf ≥ 40%, Emotion Conf ≥ 0%)", use_container_width=True)
 
                             # Individual Download Button for single image
-                            img_download_bytes = render_predictions_bytes(image_bytes, data["detections"], format="JPEG")
+                            img_download_bytes = render_predictions_bytes(image_bytes, data["detections"], format="JPEG", human_detected=data.get("human_detected", True))
                             st.download_button(
                                 label="📥 Download Annotated Image (.jpg)",
                                 data=img_download_bytes,
@@ -259,9 +259,9 @@ with tab1:
                                         df_scores = pd.DataFrame(list(det["all_scores"].items()), columns=["Emotion", "Probability"])
                                         st.bar_chart(df_scores.set_index("Emotion"))
                         else:
-                            annotated_pil = render_predictions(image_bytes, [])
+                            annotated_pil = render_predictions(image_bytes, [], human_detected=data.get("human_detected", True))
                             st.image(annotated_pil, caption="No faces detected above confidence thresholds.", use_container_width=True)
-                            st.warning("No faces detected above the 65% detection & emotion confidence thresholds.")
+                            st.warning("No faces detected above the 40% detection & 0% emotion confidence thresholds.")
                     else:
                         st.error(f"API Error ({resp.status_code}): {resp.text}")
                 except Exception as e:
@@ -317,7 +317,8 @@ with tab2:
                                                     "filename": z_fn,
                                                     "image_bytes": img_bytes,
                                                     "detections": dets,
-                                                    "total_faces": data["total_faces"]
+                                                    "total_faces": data["total_faces"],
+                                                    "human_detected": data.get("human_detected", True)
                                                 })
                                                 if not dets:
                                                     csv_records.append({
@@ -351,7 +352,8 @@ with tab2:
                                     "filename": fn,
                                     "image_bytes": b_bytes,
                                     "detections": dets,
-                                    "total_faces": data["total_faces"]
+                                    "total_faces": data["total_faces"],
+                                    "human_detected": data.get("human_detected", True)
                                 })
 
                                 if not dets:
@@ -389,7 +391,7 @@ with tab2:
         zip_buf = io.BytesIO()
         with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zout:
             for item in annotated_results:
-                ann_b = render_predictions_bytes(item["image_bytes"], item["detections"], format="JPEG")
+                ann_b = render_predictions_bytes(item["image_bytes"], item["detections"], format="JPEG", human_detected=item.get("human_detected", True))
                 safe_name = f"annotated_{os.path.basename(item['filename'])}"
                 zout.writestr(safe_name, ann_b)
         zip_buf.seek(0)
@@ -413,13 +415,14 @@ with tab2:
                     img_b = item["image_bytes"]
                     dets = item["detections"]
                     num_faces = item["total_faces"]
+                    human_detected = item.get("human_detected", True)
 
-                    ann_img = render_predictions(img_b, dets)
-                    caption_str = f"📄 {fn} ({num_faces} faces)" if num_faces > 0 else f"📄 {fn} (No Face ≥ 65%)"
+                    ann_img = render_predictions(img_b, dets, human_detected=human_detected)
+                    caption_str = f"📄 {fn} ({num_faces} faces)" if num_faces > 0 else f"📄 {fn} (No Face ≥ 40%)"
                     st.image(ann_img, caption=caption_str, use_container_width=True)
                     
                     # Individual Download Button for each image in grid
-                    dl_bytes = render_predictions_bytes(img_b, dets, format="JPEG")
+                    dl_bytes = render_predictions_bytes(img_b, dets, format="JPEG", human_detected=human_detected)
                     st.download_button(
                         label="📥 Download Image",
                         data=dl_bytes,
@@ -574,7 +577,7 @@ with tab4:
                                     })
 
                             # Re-render the bounding boxes
-                            ann_pil = render_predictions(buffer.tobytes(), dets)
+                            ann_pil = render_predictions(buffer.tobytes(), dets, human_detected=data.get("human_detected", True))
                             img_rgb = np.array(ann_pil)
                             self.last_img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
                         else:

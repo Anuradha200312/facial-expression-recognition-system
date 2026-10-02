@@ -1,7 +1,7 @@
 import os
 import numpy as np
 from typing import List, Dict, Any, Tuple
-from .config import FACE_MODEL_PATH, FACE_CONF_THRESH, FACE_CROP_MARGIN
+from .config import HUMAN_MODEL_PATH, FACE_MODEL_PATH, HUMAN_CONF_THRESH, FACE_CONF_THRESH, FACE_CROP_MARGIN
 from .preprocess import expand_bbox
 
 def compute_iou(boxA: Tuple[int, int, int, int], boxB: Tuple[int, int, int, int]) -> float:
@@ -17,11 +17,11 @@ def compute_iou(boxA: Tuple[int, int, int, int], boxB: Tuple[int, int, int, int]
     iou = interArea / float(boxAArea + boxBArea - interArea)
     return iou
 
-class CentroidFaceTracker:
-    """Persistent face tracker based on IoU and centroid matching across frames."""
+class CentroidTracker:
+    """Persistent tracker based on IoU and centroid matching across frames."""
     def __init__(self, iou_thresh: float = 0.3, max_disappeared: int = 15):
         self.next_id = 1
-        self.tracks = {}  # track_id -> {"bbox": (x1, y1, x2, y2), "disappeared": int}
+        self.tracks = {}
         self.iou_thresh = iou_thresh
         self.max_disappeared = max_disappeared
 
@@ -51,13 +51,11 @@ class CentroidFaceTracker:
         assigned_track = set()
         updated_detections = [None] * len(detections)
 
-        # Build IoU matrix
         iou_matrix = np.zeros((len(detections), len(track_ids)), dtype=np.float32)
         for i, det in enumerate(detections):
             for j, t_box in enumerate(track_boxes):
                 iou_matrix[i, j] = compute_iou(det["bbox"], t_box)
 
-        # Match highest IoU pairs
         if iou_matrix.size > 0:
             flat_indices = np.argsort(-iou_matrix.ravel())
             for idx in flat_indices:
@@ -77,7 +75,6 @@ class CentroidFaceTracker:
                 assigned_det.add(d_idx)
                 assigned_track.add(t_idx)
 
-        # Unassigned detections get new track IDs
         for i, det in enumerate(detections):
             if i not in assigned_det:
                 tid = self.next_id
@@ -87,7 +84,6 @@ class CentroidFaceTracker:
                 det_copy["track_id"] = tid
                 updated_detections[i] = det_copy
 
-        # Unassigned tracks increase disappeared counter
         for j, tid in enumerate(track_ids):
             if j not in assigned_track:
                 self.tracks[tid]["disappeared"] += 1
@@ -100,12 +96,83 @@ class CentroidFaceTracker:
         self.next_id = 1
         self.tracks = {}
 
+class HumanDetector:
+    def __init__(self, model_path: str = HUMAN_MODEL_PATH):
+        self.model_path = model_path
+        self.model = None
+        self.is_loaded = False
+        self._load_model()
+
+    def _load_model(self):
+        if os.path.exists(self.model_path):
+            try:
+                from ultralytics import YOLO
+                self.model = YOLO(self.model_path)
+                self.is_loaded = True
+            except Exception as e:
+                print(f"Warning: Failed to load YOLO human model from {self.model_path}: {e}")
+        else:
+            print(f"Notice: Human model not found at {self.model_path}. Running in mock mode.")
+
+    def detect(self, image_bgr: np.ndarray, conf_thresh: float = HUMAN_CONF_THRESH) -> List[Dict[str, Any]]:
+        humans = []
+        if image_bgr is None or image_bgr.size == 0:
+            return humans
+
+        img_h, img_w = image_bgr.shape[:2]
+        
+        if self.is_loaded and self.model is not None:
+            # Query all classes with a low threshold to find overlapping stronger non-human predictions
+            results = self.model.predict(image_bgr, conf=0.10, iou=0.50, verbose=False)
+            
+            all_boxes = []
+            for r in results:
+                if r.boxes is None:
+                    continue
+                for box in r.boxes:
+                    x1, y1, x2, y2 = box.xyxy[0].tolist()
+                    cls_id = int(box.cls[0])
+                    conf = float(box.conf[0])
+                    all_boxes.append({
+                        "bbox": (int(x1), int(y1), int(x2), int(y2)),
+                        "cls_id": cls_id,
+                        "conf": conf
+                    })
+            
+            for box in all_boxes:
+                # We only want to yield "person" (class 0) predictions that meet the confidence threshold
+                if box["cls_id"] == 0 and box["conf"] >= conf_thresh:
+                    # Robust Validation: check if a stronger non-human prediction overlaps heavily
+                    is_false_positive = False
+                    for other in all_boxes:
+                        if other["cls_id"] != 0 and other["conf"] > box["conf"]:
+                            iou = compute_iou(box["bbox"], other["bbox"])
+                            if iou > 0.50:
+                                print(f"[VALIDATION] Rejected Person (conf {box['conf']:.2f}) due to overlap with Class {other['cls_id']} (conf {other['conf']:.2f}, IoU {iou:.2f})")
+                                is_false_positive = True
+                                break
+                    
+                    if not is_false_positive:
+                        humans.append({
+                            "bbox": box["bbox"],
+                            "det_conf": box["conf"]
+                        })
+        else:
+            # Fallback mock human
+            if img_w >= 100 and img_h >= 100:
+                cx, cy = img_w // 2, img_h // 2
+                humans.append({
+                    "bbox": (max(0, cx - 100), max(0, cy - 150), min(img_w, cx + 100), min(img_h, cy + 150)),
+                    "det_conf": 0.99
+                })
+        return humans
+
 class FaceDetector:
     def __init__(self, model_path: str = FACE_MODEL_PATH):
         self.model_path = model_path
         self.model = None
         self.is_loaded = False
-        self.tracker = CentroidFaceTracker()
+        self.tracker = CentroidTracker()
         self._load_model()
 
     def _load_model(self):
@@ -116,9 +183,8 @@ class FaceDetector:
                 self.is_loaded = True
             except Exception as e:
                 print(f"Warning: Failed to load YOLO face model from {self.model_path}: {e}")
-                self.is_loaded = False
         else:
-            print(f"Notice: Face model file not found at {self.model_path}. Detector running in mock mode.")
+            print(f"Notice: Face model not found at {self.model_path}.")
 
     def detect(self, image_bgr: np.ndarray, conf_thresh: float = FACE_CONF_THRESH, margin: float = FACE_CROP_MARGIN) -> List[Dict[str, Any]]:
         if image_bgr is None or image_bgr.size == 0:
@@ -143,7 +209,6 @@ class FaceDetector:
                         "det_conf": det_conf
                     })
         else:
-            # Fallback for testing/mock when model file is not yet uploaded
             if img_w >= 40 and img_h >= 40:
                 cx, cy = img_w // 2, img_h // 2
                 w_half, h_half = int(img_w * 0.25), int(img_h * 0.25)
@@ -158,6 +223,7 @@ class FaceDetector:
         return faces
 
     def track(self, image_bgr: np.ndarray, conf_thresh: float = FACE_CONF_THRESH, margin: float = FACE_CROP_MARGIN) -> List[Dict[str, Any]]:
+        # Used if we were tracking faces directly in the whole image, but now we'll do tracking in the pipeline
         faces = self.detect(image_bgr, conf_thresh=conf_thresh, margin=margin)
         return self.tracker.update(faces)
 

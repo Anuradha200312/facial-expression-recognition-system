@@ -36,7 +36,7 @@ def health_check():
     return {
         "status": "ok",
         "service": "Face Emotion Recognition API",
-        "face_model_loaded": pipeline.detector.is_loaded,
+        "face_model_loaded": pipeline.face_detector.is_loaded,
         "emotion_model_loaded": pipeline.classifier.is_loaded
     }
 
@@ -53,7 +53,7 @@ def predict(
         payload, _ = pipeline.process_bytes(
             contents,
             filename=file.filename or "uploaded.jpg",
-            conf_thresh=conf_thresh,
+            face_conf_thresh=conf_thresh,
             emotion_conf_thresh=emotion_conf_thresh,
             margin=margin,
             is_stream=is_stream
@@ -77,7 +77,7 @@ def predict_annotated(
         _, annotated_bgr = pipeline.process_bytes(
             contents,
             filename=file.filename or "uploaded.jpg",
-            conf_thresh=conf_thresh,
+            face_conf_thresh=conf_thresh,
             emotion_conf_thresh=emotion_conf_thresh,
             margin=margin,
             is_stream=is_stream
@@ -107,7 +107,7 @@ def predict_zip(
             payload, _ = pipeline.process_bytes(
                 img_bytes,
                 filename=filename,
-                conf_thresh=conf_thresh,
+                face_conf_thresh=conf_thresh,
                 emotion_conf_thresh=emotion_conf_thresh,
                 margin=margin
             )
@@ -140,7 +140,7 @@ def predict_video(
             contents,
             filename=file.filename or "video.mp4",
             frame_stride=frame_stride,
-            conf_thresh=conf_thresh,
+            face_conf_thresh=conf_thresh,
             emotion_conf_thresh=emotion_conf_thresh,
             margin=margin
         )
@@ -162,7 +162,7 @@ def predict_video_file(
             contents,
             filename=file.filename or "video.mp4",
             frame_stride=frame_stride,
-            conf_thresh=conf_thresh,
+            face_conf_thresh=conf_thresh,
             emotion_conf_thresh=emotion_conf_thresh,
             margin=margin
         )
