@@ -41,6 +41,8 @@ services:
       - "8501:8080"
     environment:
       - BACKEND_URL=${BACKEND_URL}
+    volumes:
+      - ./frontend:/app
     depends_on:
       - backend
 

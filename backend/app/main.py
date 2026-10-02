@@ -83,6 +83,26 @@ def get_my_logs(current_user: User = Depends(get_current_user), db: Session = De
     logs = db.query(DetectionLog).filter(DetectionLog.user_id == current_user.id).order_by(DetectionLog.timestamp.desc()).all()
     return [{"id": log.id, "filename": log.filename, "timestamp": log.timestamp, "total_faces": log.total_faces, "primary_emotion": log.primary_emotion, "execution_time_ms": log.execution_time_ms} for log in logs]
 
+@app.get("/all-logs", tags=["Logs"])
+def get_all_logs(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.username != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    logs = db.query(DetectionLog).join(User).order_by(DetectionLog.timestamp.desc()).all()
+    # Add username to response
+    result = []
+    for log in logs:
+        user = db.query(User).filter(User.id == log.user_id).first()
+        result.append({
+            "id": log.id, 
+            "username": user.username if user else "unknown",
+            "filename": log.filename, 
+            "timestamp": log.timestamp, 
+            "total_faces": log.total_faces, 
+            "primary_emotion": log.primary_emotion, 
+            "execution_time_ms": log.execution_time_ms
+        })
+    return result
+
 
 @app.post("/predict", response_model=PredictionResponse, tags=["Prediction"])
 def predict(
