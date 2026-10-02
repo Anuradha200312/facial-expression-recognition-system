@@ -1,6 +1,22 @@
 version: '3.8'
 
 services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   backend:
     build:
       context: ./backend
@@ -8,9 +24,14 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - PORT=8080
-      - FACE_CONF_THRESH=0.40
-      - FACE_CROP_MARGIN=0.15
+      - PORT=${PORT}
+      - FACE_CONF_THRESH=${FACE_CONF_THRESH}
+      - FACE_CROP_MARGIN=${FACE_CROP_MARGIN}
+      - DATABASE_URL=${DATABASE_URL}
+      - SECRET_KEY=${SECRET_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
 
   frontend:
     build:
@@ -19,6 +40,9 @@ services:
     ports:
       - "8501:8080"
     environment:
-      - BACKEND_URL=http://backend:8080
+      - BACKEND_URL=${BACKEND_URL}
     depends_on:
       - backend
+
+volumes:
+  pgdata:

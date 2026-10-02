@@ -125,16 +125,16 @@ class Pipeline:
 
         return result_payload, annotated_bgr
 
-    def process_video_bytes(
+    def process_video_file(
         self,
-        video_bytes: bytes,
+        in_path: str,
         filename: str = "video.mp4",
         frame_stride: int = DEFAULT_VIDEO_FRAME_STRIDE,
         human_conf_thresh: float = None,
         face_conf_thresh: float = None,
         emotion_conf_thresh: float = None,
         margin: float = None
-    ) -> Tuple[Dict[str, Any], bytes]:
+    ) -> Tuple[Dict[str, Any], str]:
         start_time = time.time()
         if human_conf_thresh is None:
             human_conf_thresh = HUMAN_CONF_THRESH
@@ -146,10 +146,6 @@ class Pipeline:
             frame_stride = DEFAULT_VIDEO_FRAME_STRIDE
 
         local_tracker = CentroidTracker()
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as in_file:
-            in_file.write(video_bytes)
-            in_path = in_file.name
 
         out_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
         out_path = out_file.name
@@ -163,9 +159,19 @@ class Pipeline:
         fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
         w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        out_fps = max(1.0, float(fps) / frame_stride)
+        
+        writer = None
+        try:
+            import imageio
+            writer = imageio.get_writer(out_path, fps=out_fps, codec="libx264", macro_block_size=1)
+            use_imageio = True
+        except Exception:
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            writer = cv2.VideoWriter(out_path, fourcc, out_fps, (w, h))
+            use_imageio = False
 
         frame_records = []
-        annotated_frames_rgb = []
         frame_idx = 0
 
         while True:
@@ -238,8 +244,11 @@ class Pipeline:
                     cv2.rectangle(annotated_frame, (gx1, max(0, gy1 - fth - 8)), (gx1 + ftw + 4, gy1), (255, 0, 0), -1)
                     cv2.putText(annotated_frame, f_text, (gx1 + 2, max(fth, gy1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
 
-                annotated_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
-                annotated_frames_rgb.append(annotated_rgb)
+                if use_imageio:
+                    annotated_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+                    writer.append_data(annotated_rgb)
+                else:
+                    writer.write(annotated_frame)
 
                 frame_records.append({
                     "frame": frame_idx,
@@ -252,33 +261,21 @@ class Pipeline:
             frame_idx += 1
 
         cap.release()
-        os.remove(in_path)
+        if use_imageio:
+            writer.close()
+        else:
+            writer.release()
+        
+        try:
+            os.remove(in_path)
+        except Exception:
+            pass
 
+        import base64
         out_bytes = b""
-        if annotated_frames_rgb:
-            try:
-                import imageio
-                out_fps = max(1.0, float(fps) / frame_stride)
-                writer = imageio.get_writer(out_path, fps=out_fps, codec="libx264", macro_block_size=1)
-                for f_rgb in annotated_frames_rgb:
-                    writer.append_data(f_rgb)
-                writer.close()
-
-                if os.path.exists(out_path):
-                    with open(out_path, "rb") as f:
-                        out_bytes = f.read()
-                    os.remove(out_path)
-            except Exception as e:
-                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-                writer = cv2.VideoWriter(out_path, fourcc, max(1.0, fps / frame_stride), (w, h))
-                for f_rgb in annotated_frames_rgb:
-                    f_bgr = cv2.cvtColor(f_rgb, cv2.COLOR_RGB2BGR)
-                    writer.write(f_bgr)
-                writer.release()
-                if os.path.exists(out_path):
-                    with open(out_path, "rb") as f:
-                        out_bytes = f.read()
-                    os.remove(out_path)
+        if os.path.exists(out_path):
+            with open(out_path, "rb") as f:
+                out_bytes = f.read()
 
         exec_time_ms = round((time.time() - start_time) * 1000, 2)
         annotated_video_b64 = base64.b64encode(out_bytes).decode('utf-8') if out_bytes else ""
@@ -293,4 +290,4 @@ class Pipeline:
             "annotated_video_b64": annotated_video_b64
         }
 
-        return payload, out_bytes
+        return payload, out_path

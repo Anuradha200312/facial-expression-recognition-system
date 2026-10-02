@@ -176,20 +176,65 @@ except Exception:
     st.sidebar.markdown('<span class="badge-offline">🔴 API Server Disconnected</span>', unsafe_allow_html=True)
     st.sidebar.caption("Run `uvicorn backend.app.main:app --port 8080` to launch backend.")
 
+
 # Header Title
 st.markdown('<div class="main-header">🎭 Real-Time Face Emotion Intelligence</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">2-Stage Deep Learning Pipeline for Face Detection, Persistent Face Tracking, and Multi-Class Emotion Recognition.</div>', unsafe_allow_html=True)
 
+if "jwt_token" not in st.session_state:
+    st.markdown("### 🔐 Authentication Required")
+    auth_tab1, auth_tab2 = st.tabs(["🔑 Login", "📝 Register"])
+    
+    with auth_tab1:
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submit = st.form_submit_button("Login")
+            if submit:
+                resp = requests.post(f"{BACKEND_URL}/login", data={"username": username, "password": password})
+                if resp.status_code == 200:
+                    st.session_state.jwt_token = resp.json()["access_token"]
+                    st.rerun()
+                else:
+                    st.error("Invalid credentials")
+                    
+    with auth_tab2:
+        with st.form("register_form"):
+            new_user = st.text_input("Username")
+            new_email = st.text_input("Email")
+            new_pass = st.text_input("Password", type="password")
+            submit_reg = st.form_submit_button("Register")
+            if submit_reg:
+                resp = requests.post(f"{BACKEND_URL}/register", json={"username": new_user, "email": new_email, "password": new_pass})
+                if resp.status_code == 200:
+                    st.success("Registered! Please login.")
+                else:
+                    st.error(resp.json().get("detail", "Error registering"))
+    st.stop()
+
+if st.sidebar.button("🚪 Logout"):
+    del st.session_state.jwt_token
+    st.rerun()
+
 # Main Application Tabs
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📸 Single Image",
     "📦 Batch & Grid Processing",
     "🎞️ Video Analysis",
-    "🎥 Live Stream Camera"
+    "🎥 Live Stream Camera",
+    "🗂️ My History"
 ])
 
-# Helper function to call prediction API
-def call_predict_api(image_bytes: bytes, filename: str = "upload.jpg", is_stream: bool = False):
+def get_auth_headers(token=None):
+    if token:
+        return {"Authorization": f"Bearer {token}"}
+    try:
+        return {"Authorization": f"Bearer {st.session_state.get('jwt_token', '')}"}
+    except Exception:
+        return {}
+
+
+def call_predict_api(image_bytes: bytes, filename: str = "upload.jpg", is_stream: bool = False, token: str = None):
     params = {
         "conf_thresh": FACE_CONF_THRESH,
         "emotion_conf_thresh": EMOTION_CONF_THRESH,
@@ -197,7 +242,7 @@ def call_predict_api(image_bytes: bytes, filename: str = "upload.jpg", is_stream
         "is_stream": is_stream
     }
     files = {"file": (filename, image_bytes, "image/jpeg")}
-    return requests.post(f"{BACKEND_URL}/predict", params=params, files=files, timeout=15)
+    return requests.post(f"{BACKEND_URL}/predict", params=params, files=files, headers=get_auth_headers(token), timeout=15)
 
 # -------------------------------------------------------------------
 # TAB 1: Single Image Analysis
@@ -215,57 +260,68 @@ with tab1:
     with col2:
         st.markdown("### 📊 Detection & Emotion Output")
         if uploaded_image:
-            with st.spinner("Analyzing image..."):
-                try:
-                    resp = call_predict_api(image_bytes, uploaded_image.name)
-                    if resp.status_code == 200:
-                        data = resp.json()
-
-                        # Metrics Display Cards
-                        m1, m2, m3 = st.columns(3)
-                        with m1:
-                            st.markdown(f'<div class="metric-panel"><div class="metric-value">{data["total_faces"]}</div><div class="metric-label">Detected Faces</div></div>', unsafe_allow_html=True)
-                        with m2:
-                            st.markdown(f'<div class="metric-panel"><div class="metric-value">{data["execution_time_ms"]} ms</div><div class="metric-label">Latency</div></div>', unsafe_allow_html=True)
-                        with m3:
-                            top_emo = data["detections"][0]["emotion_label"] if data["total_faces"] > 0 else "None"
-                            st.markdown(f'<div class="metric-panel"><div class="metric-value">{top_emo}</div><div class="metric-label">Primary Emotion</div></div>', unsafe_allow_html=True)
-
-                        st.markdown("<br>", unsafe_allow_html=True)
-
-                        if data["total_faces"] > 0:
-                            annotated_pil = render_predictions(image_bytes, data["detections"], human_detected=data.get("human_detected", True))
-                            st.image(annotated_pil, caption="Pipeline Annotations (Bounding Box, Track ID, Face Conf ≥ 40%, Emotion Conf ≥ 0%)", use_container_width=True)
-
-                            # Individual Download Button for single image
-                            img_download_bytes = render_predictions_bytes(image_bytes, data["detections"], format="JPEG", human_detected=data.get("human_detected", True))
-                            st.download_button(
-                                label="📥 Download Annotated Image (.jpg)",
-                                data=img_download_bytes,
-                                file_name=f"annotated_{uploaded_image.name}",
-                                mime="image/jpeg",
-                                type="primary",
-                                use_container_width=True
-                            )
-
-                            st.markdown("#### 🎯 Per-Face Emotion Analysis")
-                            for det in data["detections"]:
-                                track_str = f"Face #{det.get('track_id', det['face_id']+1)}"
-                                with st.expander(f"{track_str} — {det['emotion_label']} (Face: {det['face_confidence']*100:.1f}%, Emo: {det['emotion_confidence']*100:.1f}%)"):
-                                    st.write(f"**Bounding Box:** `{det['bbox']}`")
-                                    st.write(f"**Face Detection Confidence:** `{det['face_confidence']*100:.1f}%`")
-                                    st.write(f"**Emotion Classification Confidence:** `{det['emotion_confidence']*100:.1f}%`")
-                                    if det.get("all_scores"):
-                                        df_scores = pd.DataFrame(list(det["all_scores"].items()), columns=["Emotion", "Probability"])
-                                        st.bar_chart(df_scores.set_index("Emotion"))
+            # Check if this image was already processed to avoid re-running on button clicks
+            if getattr(st.session_state, "last_uploaded_name", None) != uploaded_image.name:
+                with st.spinner("Analyzing image..."):
+                    try:
+                        resp = call_predict_api(image_bytes, uploaded_image.name)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            st.session_state.last_uploaded_name = uploaded_image.name
+                            st.session_state.single_data = data
+                            if data["total_faces"] > 0:
+                                st.session_state.single_dl_bytes = render_predictions_bytes(image_bytes, data["detections"], format="JPEG", human_detected=data.get("human_detected", True))
+                            else:
+                                st.session_state.single_dl_bytes = None
                         else:
-                            annotated_pil = render_predictions(image_bytes, [], human_detected=data.get("human_detected", True))
-                            st.image(annotated_pil, caption="No faces detected above confidence thresholds.", use_container_width=True)
-                            st.warning("No faces detected above the 40% detection & 0% emotion confidence thresholds.")
-                    else:
-                        st.error(f"API Error ({resp.status_code}): {resp.text}")
-                except Exception as e:
-                    st.error(f"Failed to connect to backend: {e}")
+                            st.error(f"API Error: {resp.text}")
+                    except Exception as e:
+                        st.error(f"API Request failed: {e}")
+
+            data = getattr(st.session_state, "single_data", None)
+            if data and getattr(st.session_state, "last_uploaded_name", None) == uploaded_image.name:
+                # Metrics Display Cards
+                m1, m2, m3 = st.columns(3)
+                with m1:
+                    st.markdown(f'<div class="metric-panel"><div class="metric-value">{data["total_faces"]}</div><div class="metric-label">Detected Faces</div></div>', unsafe_allow_html=True)
+                with m2:
+                    st.markdown(f'<div class="metric-panel"><div class="metric-value">{data["execution_time_ms"]} ms</div><div class="metric-label">Latency</div></div>', unsafe_allow_html=True)
+                with m3:
+                    top_emo = data["detections"][0]["emotion_label"] if data["total_faces"] > 0 else "None"
+                    st.markdown(f'<div class="metric-panel"><div class="metric-value">{top_emo}</div><div class="metric-label">Primary Emotion</div></div>', unsafe_allow_html=True)
+
+                st.markdown("<br>", unsafe_allow_html=True)
+
+                if data["total_faces"] > 0 and getattr(st.session_state, "single_dl_bytes", None):
+                    img_download_bytes = st.session_state.single_dl_bytes
+                    
+                    # Display using bytes (fixes PIL rendering bugs in Streamlit)
+                    st.image(img_download_bytes, caption="Pipeline Annotations (Bounding Box, Track ID, Face Conf ≥ 40%, Emotion Conf ≥ 0%)", use_container_width=True)
+
+                    # Individual Download Button for single image
+                    st.download_button(
+                        label="📥 Download Annotated Image (.jpg)",
+                        data=img_download_bytes,
+                        file_name=f"annotated_{uploaded_image.name}",
+                        mime="image/jpeg",
+                        type="primary",
+                        use_container_width=True
+                    )
+
+                    st.markdown("#### 🎯 Per-Face Emotion Analysis")
+                    for det in data["detections"]:
+                        track_str = f"Face #{det.get('track_id', det['face_id']+1)}"
+                        with st.expander(f"{track_str} — {det['emotion_label']} (Face: {det['face_confidence']*100:.1f}%, Emo: {det['emotion_confidence']*100:.1f}%)"):
+                            st.write(f"**Bounding Box:** `{det['bbox']}`")
+                            st.write(f"**Face Detection Confidence:** `{det['face_confidence']*100:.1f}%`")
+                            st.write(f"**Emotion Classification Confidence:** `{det['emotion_confidence']*100:.1f}%`")
+                            if det.get("all_scores"):
+                                df_scores = pd.DataFrame(list(det["all_scores"].items()), columns=["Emotion", "Probability"])
+                                st.bar_chart(df_scores.set_index("Emotion"))
+                else:
+                    annotated_pil = render_predictions(image_bytes, [], human_detected=data.get("human_detected", True))
+                    st.image(annotated_pil, caption="No faces detected above confidence thresholds.", use_container_width=True)
+                    st.warning("No faces detected above the 40% detection & 0% emotion confidence thresholds.")
         else:
             st.info("Upload an image to trigger face detection and emotion classification.")
 
@@ -318,7 +374,8 @@ with tab2:
                                                     "image_bytes": img_bytes,
                                                     "detections": dets,
                                                     "total_faces": data["total_faces"],
-                                                    "human_detected": data.get("human_detected", True)
+                                                    "human_detected": data.get("human_detected", True),
+                                                    "dl_bytes": render_predictions_bytes(img_bytes, dets, format="JPEG", human_detected=data.get("human_detected", True))
                                                 })
                                                 if not dets:
                                                     csv_records.append({
@@ -330,7 +387,7 @@ with tab2:
                                                     for det in dets:
                                                         csv_records.append({
                                                             "Archive": fn, "Filename": z_fn,
-                                                            "Track ID": det.get("track_id", det["face_id"] + 1),
+                                                            "Track ID": str(det.get("track_id", det["face_id"] + 1)),
                                                             "Total Faces": data["total_faces"],
                                                             "Emotion": det["emotion_label"],
                                                             "Emotion Conf": f"{det['emotion_confidence']*100:.1f}%",
@@ -353,7 +410,8 @@ with tab2:
                                     "image_bytes": b_bytes,
                                     "detections": dets,
                                     "total_faces": data["total_faces"],
-                                    "human_detected": data.get("human_detected", True)
+                                    "human_detected": data.get("human_detected", True),
+                                    "dl_bytes": render_predictions_bytes(b_bytes, dets, format="JPEG", human_detected=data.get("human_detected", True))
                                 })
 
                                 if not dets:
@@ -366,7 +424,7 @@ with tab2:
                                     for det in dets:
                                         csv_records.append({
                                             "Archive": "Direct Upload", "Filename": fn,
-                                            "Track ID": det.get("track_id", det["face_id"] + 1),
+                                            "Track ID": str(det.get("track_id", det["face_id"] + 1)),
                                             "Total Faces": data["total_faces"],
                                             "Emotion": det["emotion_label"],
                                             "Emotion Conf": f"{det['emotion_confidence']*100:.1f}%",
@@ -391,9 +449,10 @@ with tab2:
         zip_buf = io.BytesIO()
         with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zout:
             for item in annotated_results:
-                ann_b = render_predictions_bytes(item["image_bytes"], item["detections"], format="JPEG", human_detected=item.get("human_detected", True))
                 safe_name = f"annotated_{os.path.basename(item['filename'])}"
-                zout.writestr(safe_name, ann_b)
+                # Change png extension to jpg because we compress as JPEG
+                safe_name = os.path.splitext(safe_name)[0] + ".jpg"
+                zout.writestr(safe_name, item["dl_bytes"])
         zip_buf.seek(0)
 
         st.download_button(
@@ -412,21 +471,17 @@ with tab2:
             for col_idx, item in enumerate(row_items):
                 with cols[col_idx]:
                     fn = os.path.basename(item["filename"])
-                    img_b = item["image_bytes"]
-                    dets = item["detections"]
                     num_faces = item["total_faces"]
-                    human_detected = item.get("human_detected", True)
+                    dl_bytes = item["dl_bytes"]
 
-                    ann_img = render_predictions(img_b, dets, human_detected=human_detected)
                     caption_str = f"📄 {fn} ({num_faces} faces)" if num_faces > 0 else f"📄 {fn} (No Face ≥ 40%)"
-                    st.image(ann_img, caption=caption_str, use_container_width=True)
                     
-                    # Individual Download Button for each image in grid
-                    dl_bytes = render_predictions_bytes(img_b, dets, format="JPEG", human_detected=human_detected)
+                    st.image(dl_bytes, caption=caption_str, use_container_width=True)
+                    
                     st.download_button(
                         label="📥 Download Image",
                         data=dl_bytes,
-                        file_name=f"annotated_{fn}",
+                        file_name=f"annotated_{os.path.splitext(fn)[0]}.jpg",
                         mime="image/jpeg",
                         key=f"dl_grid_{row_idx}_{col_idx}_{fn}",
                         use_container_width=True
@@ -468,7 +523,7 @@ with tab3:
                         "emotion_conf_thresh": EMOTION_CONF_THRESH,
                         "margin": FACE_CROP_MARGIN
                     }
-                    resp = requests.post(f"{BACKEND_URL}/predict-video", params=params, files=files, timeout=180)
+                    resp = requests.post(f"{BACKEND_URL}/predict-video", params=params, files=files, headers=get_auth_headers(), timeout=180)
 
                     if resp.status_code == 200:
                         v_data = resp.json()
@@ -494,7 +549,7 @@ with tab3:
                                     rows.append({
                                         "Frame": f_idx,
                                         "Time (s)": t_sec,
-                                        "Track ID": det.get("track_id", det["face_id"] + 1),
+                                        "Track ID": str(det.get("track_id", det["face_id"] + 1)),
                                         "Emotion": det["emotion_label"],
                                         "Emotion Conf": f"{det['emotion_confidence']*100:.1f}%",
                                         "Face Conf": f"{det['face_confidence']*100:.1f}%"
@@ -536,54 +591,57 @@ with tab4:
     st.markdown("### 🎥 Live Continuous Camera Stream")
     st.markdown("Displays a **real-time live stream** from your webcam in HD. Live emotion events are logged below.")
 
+    current_token = st.session_state.get("jwt_token")
+
     class EmotionVideoProcessor(VideoProcessorBase):
-        def __init__(self):
+        def __init__(self, token):
             self.frame_count = 0
             self.last_img_bgr = None
             self.log_queue = queue.Queue()
+            self.token = token
 
         def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
-            img_bgr = frame.to_ndarray(format="bgr24")
-            self.frame_count += 1
-            
-            # Subsample frames to maintain high framerate and avoid overloading backend
-            if self.frame_count % VIDEO_FRAME_STRIDE == 0 or self.last_img_bgr is None:
-                success, buffer = cv2.imencode('.jpg', img_bgr)
-                if success:
-                    try:
-                        # Direct HTTP call to the backend
-                        resp = call_predict_api(buffer.tobytes(), "stream.jpg", is_stream=True)
+            try:
+                img_bgr = frame.to_ndarray(format="bgr24")
+                self.frame_count += 1
+                
+                with open("/tmp/webrtc_debug.log", "a") as f:
+                    f.write(f"Frame {self.frame_count}: started\n")
+
+                if self.frame_count % VIDEO_FRAME_STRIDE == 0 or self.last_img_bgr is None:
+                    success, buffer = cv2.imencode('.jpg', img_bgr)
+                    if success:
+                        with open("/tmp/webrtc_debug.log", "a") as f:
+                            f.write(f"Frame {self.frame_count}: imencode success\n")
+                        
+                        resp = call_predict_api(buffer.tobytes(), "stream.jpg", is_stream=True, token=self.token)
+                        
+                        with open("/tmp/webrtc_debug.log", "a") as f:
+                            f.write(f"Frame {self.frame_count}: API returned {resp.status_code}\n")
+
                         if resp.status_code == 200:
                             data = resp.json()
                             dets = data.get("detections", [])
-                            
-                            # Safely put detections into queue for the main thread to read
                             if len(dets) == 0:
-                                self.log_queue.put({
-                                    "Frame": self.frame_count,
-                                    "Track ID": "-",
-                                    "Emotion": "No Face Detected",
-                                    "Emotion Conf": "-",
-                                    "Face Conf": "-"
-                                })
+                                self.log_queue.put({"Frame": self.frame_count, "Track ID": "-", "Emotion": "No Face Detected", "Emotion Conf": "-", "Face Conf": "-"})
                             else:
                                 for det in dets:
                                     self.log_queue.put({
                                         "Frame": self.frame_count,
-                                        "Track ID": det.get("track_id", det.get("face_id", 0) + 1),
+                                        "Track ID": str(det.get("track_id", det.get("face_id", 0) + 1)),
                                         "Emotion": det["emotion_label"],
                                         "Emotion Conf": f"{det['emotion_confidence']*100:.1f}%",
                                         "Face Conf": f"{det['face_confidence']*100:.1f}%"
                                     })
-
-                            # Re-render the bounding boxes
                             ann_pil = render_predictions(buffer.tobytes(), dets, human_detected=data.get("human_detected", True))
                             img_rgb = np.array(ann_pil)
                             self.last_img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
                         else:
                             self.last_img_bgr = img_bgr
-                    except Exception:
-                        self.last_img_bgr = img_bgr
+            except Exception as e:
+                import traceback
+                with open("/tmp/webrtc_error.log", "a") as f:
+                    f.write(f"WebRTC Exception: {e}\n{traceback.format_exc()}\n")
             
             out_img = self.last_img_bgr if self.last_img_bgr is not None else img_bgr
             return av.VideoFrame.from_ndarray(out_img, format="bgr24")
@@ -592,7 +650,7 @@ with tab4:
     webrtc_ctx = webrtc_streamer(
         key="emotion-stream",
         mode=WebRtcMode.SENDRECV,
-        video_processor_factory=EmotionVideoProcessor,
+        video_processor_factory=lambda: EmotionVideoProcessor(token=current_token),
         media_stream_constraints={"video": {"width": {"ideal": 1280}, "height": {"ideal": 720}, "frameRate": {"ideal": 60}}, "audio": False},
         video_html_attrs={
             "style": {"width": "100%", "margin": "0 auto", "border": "2px solid #3B82F6", "border-radius": "10px"},
@@ -644,3 +702,47 @@ with tab4:
             type="primary",
             use_container_width=True
         )
+
+# -------------------------------------------------------------------
+# TAB 5: My History
+# -------------------------------------------------------------------
+with tab5:
+    st.markdown("### 🗂️ My Detection History")
+    st.markdown("View all your past processed images and videos, securely stored in the PostgreSQL database.")
+    
+    if st.button("🔄 Refresh History"):
+        st.rerun()
+        
+    try:
+        resp = requests.get(f"{BACKEND_URL}/my-logs", headers=get_auth_headers(), timeout=10)
+        if resp.status_code == 200:
+            logs = resp.json()
+            if not logs:
+                st.info("No history found. Process some images or videos first!")
+            else:
+                df_history = pd.DataFrame(logs)
+                # Format timestamp
+                df_history['timestamp'] = pd.to_datetime(df_history['timestamp']).dt.strftime('%Y-%m-%d %H:%M:%S')
+                df_history.rename(columns={
+                    "id": "Log ID",
+                    "filename": "Filename",
+                    "timestamp": "Timestamp",
+                    "total_faces": "Total Faces",
+                    "primary_emotion": "Primary Emotion",
+                    "execution_time_ms": "Latency (ms)"
+                }, inplace=True)
+                
+                st.dataframe(df_history, use_container_width=True)
+                
+                csv_bytes = df_history.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Download Full History CSV",
+                    data=csv_bytes,
+                    file_name="my_detection_history.csv",
+                    mime="text/csv",
+                    type="primary"
+                )
+        else:
+            st.error("Failed to load history.")
+    except Exception as e:
+        st.error(f"Error fetching history: {e}")
