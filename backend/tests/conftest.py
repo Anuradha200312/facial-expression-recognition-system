@@ -10,6 +10,13 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.main import app
+from app.auth import get_current_user
+from app.models import User
+
+def mock_get_current_user():
+    return User(id=1, username="test_user", email="test@test.local")
+
+app.dependency_overrides[get_current_user] = mock_get_current_user
 
 @pytest.fixture
 def client():
