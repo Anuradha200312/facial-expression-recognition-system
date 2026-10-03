@@ -36,7 +36,7 @@ FACE_CONF_THRESH = float(os.getenv("FACE_CONF_THRESH", "0.40"))
 EMOTION_CONF_THRESH = float(os.getenv("EMOTION_CONF_THRESH", "0.00"))
 FACE_CROP_MARGIN = float(os.getenv("FACE_CROP_MARGIN", "0.15"))
 
-EMOTIONS = ["Angry", "Disgust", "Fear", "Happy", "Sad", "Surprise", "Neutral"]
+EMOTIONS = ["Angry", "Disgust", "Fear", "Happy", "Sad", "Surprise", "Neutral", "Contempt"]
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv"}
 MIN_RESOLUTION = 20
