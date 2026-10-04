@@ -3,6 +3,8 @@ version: '3.8'
 services:
   db:
     image: postgres:15-alpine
+    logging:
+      driver: gcplogs
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
@@ -23,6 +25,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8080:8080"
+    logging:
+      driver: gcplogs
     environment:
       - PORT=${PORT}
       - FACE_CONF_THRESH=${FACE_CONF_THRESH}
@@ -39,6 +43,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8501:8080"
+    logging:
+      driver: gcplogs
     environment:
       - BACKEND_URL=${BACKEND_URL}
     volumes:
