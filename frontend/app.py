@@ -566,7 +566,15 @@ elif page == "📷 Live Camera":
     ctx = webrtc_streamer(
         key="emotion-stream",
         mode=WebRtcMode.SENDRECV,
-        rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+        rtc_configuration={
+            "iceServers": [
+                {"urls": ["stun:stun.l.google.com:19302"]},
+                {"urls": ["stun:stun1.l.google.com:19302"]},
+                {"urls": ["stun:stun2.l.google.com:19302"]},
+                {"urls": ["stun:stun.stunprotocol.org:3478"]},
+                {"urls": ["stun:stun.l.google.com:19302?transport=tcp"]}
+            ]
+        },
         video_processor_factory=lambda: EmotionVideoProcessor(token=jwt_tok, frame_stride=stride, c_thresh=c_thresh, e_thresh=e_thresh, margin=m_thresh),
         media_stream_constraints={"video": {"width": {"ideal": 1280}, "height": {"ideal": 720}, "frameRate": {"ideal": 60}}, "audio": False},
         video_html_attrs={
