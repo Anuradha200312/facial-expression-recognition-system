@@ -41,12 +41,11 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    ports:
-      - "8501:8080"
+    network_mode: "host"
     logging:
       driver: gcplogs
     environment:
-      - BACKEND_URL=${BACKEND_URL}
+      - BACKEND_URL=http://127.0.0.1:8080
     volumes:
       - ./frontend:/app
     depends_on:
